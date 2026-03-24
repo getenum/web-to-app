@@ -457,15 +457,39 @@ class ApkBuilder(private val context: Context) {
             }
             logger.logKeyValue("unsignedApkSize", "${unsignedApk.length() / 1024} KB")
             
-            // === Native APK 体积优化（已禁用）===
-            // 注意: NativeApkOptimizer 的 C 层裁剪逻辑过于激进，
-            // 会误删 AppCompat 必需的资源文件（如 res/layout/abc_screen_simple.xml），
-            // 导致 Shell 应用在 setContentView 时崩溃：
-            //   Resources$NotFoundException: res/layout/abc_screen_simple.xml
-            // 暂时禁用，直到 native 层的资源白名单修复。
+            // === C 级底层 APK 体积优化 ===
+            // 在签名前对 ZIP 进行深度优化：
+            // - DEFLATE 超压缩 (zlib level 9)
+            // - 移除 Shell 不需要的条目 (编辑器专用 res/layout, res/menu, Kotlin metadata 等)
+            // - CRC32 去重
+            // - resources.arsc 4 字节对齐
+            // 注意: abc_ 前缀的 AppCompat/AndroidX 资源已在 C 层白名单中保留
             logger.section("Native APK Optimization")
-            logger.warn("Native optimizer DISABLED: strips essential AppCompat resources (abc_screen_simple.xml etc.)")
-            AppLogger.w("ApkBuilder", "Native APK optimizer disabled to prevent AppCompat resource stripping")
+            val optimizedApk = File(tempDir, "${packageName}_optimized.apk")
+            optimizedApk.delete()
+            
+            try {
+                val optimizeResult = NativeApkOptimizer.optimizeApk(unsignedApk, optimizedApk)
+                
+                if (optimizeResult != null && optimizeResult.success && optimizedApk.exists() && optimizedApk.length() > 0) {
+                    logger.log(optimizeResult.formatReport())
+                    logger.logKeyValue("nativeOptimizedSize", "${optimizedApk.length() / 1024} KB")
+                    logger.logKeyValue("nativeOptSavings", "${optimizeResult.totalSavings / 1024} KB (${String.format("%.1f", optimizeResult.savingsPercent)}%)")
+                    
+                    // 使用优化后的 APK 替换未签名 APK
+                    unsignedApk.delete()
+                    optimizedApk.renameTo(unsignedApk)
+                    
+                    AppLogger.i("ApkBuilder", "Native APK optimization: ${optimizeResult.totalSavings / 1024} KB saved (${String.format("%.1f", optimizeResult.savingsPercent)}%)")
+                } else {
+                    logger.warn("Native optimization skipped/failed, using original unsigned APK")
+                    optimizedApk.delete()
+                }
+            } catch (e: Exception) {
+                logger.warn("Native optimization error (non-fatal): ${e.message}")
+                AppLogger.w("ApkBuilder", "Native optimization failed (non-fatal)", e)
+                optimizedApk.delete()
+            }
             
             onProgress(75, "Signing APK...")
             logger.section("Sign APK")

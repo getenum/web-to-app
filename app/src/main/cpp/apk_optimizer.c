@@ -113,27 +113,75 @@ typedef struct {
  * ==================================================================== */
 
 /**
+ * 检查资源文件名是否为框架必需的资源（不可裁剪）
+ * 
+ * AppCompat/AndroidX/Material 的资源以特定前缀命名。
+ * 即使 Shell 使用 Compose，AppCompatActivity 的 SubDecor 机制
+ * 仍然需要加载这些 XML 布局（如 abc_screen_simple.xml）。
+ * Material Components 也需要 mtrl_* / design_* / m3_* 资源。
+ * 
+ * @param filename  文件名部分（不含目录前缀，如 "abc_screen_simple.xml"）
+ * @return 1 = 框架资源，必须保留; 0 = 非框架资源，可按策略处理
+ */
+static int is_framework_resource(const char *filename) {
+    /* AppCompat 资源: abc_* */
+    if (strncmp(filename, "abc_", 4) == 0) return 1;
+    /* Material Components: mtrl_* */
+    if (strncmp(filename, "mtrl_", 5) == 0) return 1;
+    /* Design Library: design_* */
+    if (strncmp(filename, "design_", 7) == 0) return 1;
+    /* Material 3: m3_* */
+    if (strncmp(filename, "m3_", 3) == 0) return 1;
+    /* AndroidX Preference: preference_* */
+    if (strncmp(filename, "preference_", 11) == 0) return 1;
+    /* Notification compat: notification_* */
+    if (strncmp(filename, "notification_", 13) == 0) return 1;
+    /* AndroidX core: tooltip_*, custom_dialog_* */
+    if (strncmp(filename, "tooltip_", 8) == 0) return 1;
+    if (strncmp(filename, "custom_dialog", 13) == 0) return 1;
+    /* Support library compat */
+    if (strncmp(filename, "compat_", 7) == 0) return 1;
+    if (strncmp(filename, "support_", 8) == 0) return 1;
+    
+    return 0;
+}
+
+/**
+ * 从完整 ZIP 路径中提取文件名部分
+ * 例如: "res/layout-sw600dp/abc_screen_simple.xml" -> "abc_screen_simple.xml"
+ */
+static const char *get_res_filename(const char *path) {
+    const char *last_slash = strrchr(path, '/');
+    return last_slash ? last_slash + 1 : path;
+}
+
+/**
  * 检查 res/ 条目是否为Shell模式不需要的资源
  * 
- * Shell APK 只需要：
+ * Shell APK 需要保留：
  * - 图标 (mipmap/ic_launcher*)
  * - 基本值 (values/*)
- * - XML 布局（极少）
+ * - AppCompat/AndroidX/Material 框架资源 (abc_*, mtrl_*, design_*, m3_* 等)
  * 
- * 不需要：
- * - 多余密度的图标 (已经替换为用户图标)
- * - 编辑器专用的 drawable/layout/anim/menu 等
+ * 可以裁剪：
+ * - 编辑器专用的自定义 drawable/layout/anim/menu 等
+ * - 多余密度的编辑器图标
  */
 static int is_strippable_resource(const char *name, int name_len) {
     /* 保留 resources.arsc (不在 res/ 下) */
     
-    /* 空布局/动画/菜单 — Shell mode 用 Compose 不需要 XML 布局 */
     if (name_len > 4) {
-        /* res/layout*  — Shell 使用 Compose，不需要 XML 布局 */
+        /* 提取文件名部分用于框架资源白名单检查 */
+        const char *filename = get_res_filename(name);
+        
+        /* 框架资源一律保留，不管在哪个资源目录下 */
+        if (is_framework_resource(filename)) return 0;
+        
+        /* res/layout*  — 裁剪非框架的自定义 XML 布局 */
         if (strncmp(name, "res/layout", 10) == 0) return 1;
         /* res/menu*    — Shell 不使用 XML 菜单 */
         if (strncmp(name, "res/menu", 8) == 0) return 1;
-        /* res/anim*    — Shell 不使用 XML 动画 */
+        /* res/anim*    — 裁剪非框架的自定义 XML 动画 */
         if (strncmp(name, "res/anim", 8) == 0) return 1;
         /* res/animator* */
         if (strncmp(name, "res/animator", 12) == 0) return 1;
