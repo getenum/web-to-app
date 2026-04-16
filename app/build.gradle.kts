@@ -210,7 +210,7 @@ val generateAppStringsAccessors = tasks.register("generateAppStringsAccessors") 
 android {
     sourceSets.getByName("main").java.srcDir(generatedAppStringsDir)
 
-//    signingConfigs {
+    //signingConfigs {
         create("shiaho") {
             storeFile = file(localProperties.getProperty("signing.storeFile", ""))
             storePassword = localProperties.getProperty("signing.storePassword", "")
